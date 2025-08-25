@@ -1,32 +1,49 @@
 import cv2
 import numpy as np
 import os
+from pdf2image import convert_from_path
 
-# ---------- Blur Detection ----------
-def detect_blur(image, lap_thresh=100, tenengrad_thresh=50):
-# def detect_blur_text_sensitive(image, lap_thresh=100, tenengrad_thresh=50):
+# Quality Evaluation
+# Check if enough text is present (text_coverage_ratio >= 0.05, else reject for OCR)
+# Check if text is sharp enough (use text-sensitive blur, fail if blur_pass == False)
+# Check if document skew is acceptable (abs(skew_angle) <= 2°, else reject or correct)
+# Check if contrast is sufficient (contrast_score >= 15, else reject as faded text)
+# Check if exposure is valid (not under_exposed and not over_exposed, else reject)
+# Check if resolution is OCR-ready (dpi >= 150–200, else reject as low-res)
+# Check if document is cropped properly (border_artifacts == False, else reject)
+
+
+def detect_blur_text_sensitive(image, lap_thresh=100, tenengrad_thresh=50):
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
 
-    # Laplacian variance
-    lap_var = cv2.Laplacian(gray, cv2.CV_64F).var()
+    # Binarize to isolate text
+    _, bw = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    text_mask = (bw == 0).astype(np.uint8)  # black pixels = text
 
-    # Tenengrad with median (less sensitive to slant/tilt)
-    gx = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=3)
-    gy = cv2.Sobel(gray, cv2.CV_64F, 0, 1, ksize=3)
+    # Morphology to clean small noise
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+    text_mask = cv2.morphologyEx(text_mask, cv2.MORPH_OPEN, kernel, iterations=1)
+
+    #Apply mask (keep only text pixels)
+    gray_text = cv2.bitwise_and(gray, gray, mask=text_mask)
+
+    #Blur measures (on text only)
+    lap_var = cv2.Laplacian(gray_text, cv2.CV_64F).var()
+
+    gx = cv2.Sobel(gray_text, cv2.CV_64F, 1, 0, ksize=3)
+    gy = cv2.Sobel(gray_text, cv2.CV_64F, 0, 1, ksize=3)
     gnorm = np.sqrt(gx**2 + gy**2)
-    tenengrad_median = np.median(gnorm)
+    tenengrad_median = np.median(gnorm[text_mask > 0]) if np.any(text_mask > 0) else 0
 
-    # decision
+    #Decision
     blur_pass = (lap_var >= lap_thresh) and (tenengrad_median >= tenengrad_thresh)
 
     return {
-        "laplacian_score": lap_var,
-        "tenengrad_median": tenengrad_median,
+        "laplacian_score_text": lap_var,
+        "tenengrad_median_text": tenengrad_median,
         "blur_pass": blur_pass
     }
 
-
-# ---------- Skew Detection ----------
 def compute_skew(image):
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     gray = cv2.bitwise_not(gray)
@@ -37,47 +54,105 @@ def compute_skew(image):
         angle = -(90 + angle)
     else:
         angle = -angle
-    # normalize -90 to 0 (common OpenCV quirk)
     if angle == -90:
         angle = 0.0
     return angle
 
-# ---------- Contrast Estimation ----------
 def estimate_contrast(image):
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    return gray.std()  # standard deviation of intensity
+    return gray.std()
 
-# ---------- Resolution Estimation ----------
 def estimate_resolution(image, dpi_assumed=96):
     h, w = image.shape[:2]
-    width_inch = w / dpi_assumed
-    height_inch = h / dpi_assumed
-    return {"width_px": w, "height_px": h,
-            "width_inch": width_inch, "height_inch": height_inch}
+    return {
+        "width_px": w,
+        "height_px": h,
+        "width_inch": w / dpi_assumed,
+        "height_inch": h / dpi_assumed
+    }
 
-# ---------- Full Pipeline ----------
-def analyze_document_quality(image_path, blur_thresh=100, tenengrad_thresh=50, contrast_thresh=15):
-    image = cv2.imread(image_path)
-    if image is None:
-        raise ValueError("Could not read image: check path or file format")
+def estimate_brightness(image):
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    mean_intensity = np.mean(gray)
+    return {"mean_brightness": mean_intensity,
+            "under_exposed": mean_intensity < 50,
+            "over_exposed": mean_intensity > 200}
 
-    blur_report = detect_blur(image, blur_thresh, tenengrad_thresh)
+def estimate_noise(image):
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    lap = cv2.Laplacian(gray, cv2.CV_64F)
+    noise_level = lap.var()
+    return {"noise_score": noise_level,
+            "noisy": noise_level > 500}
+
+def estimate_text_coverage(image):
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    _, bw = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    text_pixels = np.sum(bw == 0)
+    total_pixels = bw.size
+    ratio = text_pixels / total_pixels
+    return {"text_coverage_ratio": ratio,
+            "too_little_text": ratio < 0.05}
+
+def check_color(image):
+    if len(image.shape) < 3 or image.shape[2] == 1:
+        return {"is_color": False}
+    b, g, r = cv2.split(image)
+    if np.array_equal(b, g) and np.array_equal(b, r):
+        return {"is_color": False}
+    return {"is_color": True}
+
+def detect_borders(image):
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    _, bw = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    white_ratio = np.mean(bw == 255)
+    return {"border_artifacts": white_ratio < 0.9}
+
+def analyze_document_quality_file(file_path, dpi=200):
+    ext = os.path.splitext(file_path)[-1].lower()
+
+    if ext in [".jpg", ".jpeg",'.webp', ".png", ".tif", ".tiff", ".bmp"]:
+        image = cv2.imread(file_path)
+        return {"file": file_path, "pages": [analyze_document_quality_image(image)]}
+
+    elif ext == ".pdf":
+        pages = convert_from_path(file_path, dpi=dpi)
+        results = []
+        for i, page in enumerate(pages):
+            image = cv2.cvtColor(np.array(page), cv2.COLOR_RGB2BGR)
+            result = analyze_document_quality_image(image)
+            results.append({"page": i+1, "report": result})
+        return {"file": file_path, "pages": results}
+
+    else:
+        raise ValueError(f"Unsupported file type: {ext}")
+
+def analyze_document_quality_image(image, blur_thresh=100, tenengrad_thresh=50, contrast_thresh=15):
+    blur_report_with_text = detect_blur_text_sensitive(image, lap_thresh=blur_thresh, tenengrad_thresh=tenengrad_thresh)
     skew_angle = compute_skew(image)
     contrast = estimate_contrast(image)
     resolution = estimate_resolution(image)
+    brightness = estimate_brightness(image)
+    noise = estimate_noise(image)
+    text_coverage = estimate_text_coverage(image)
+    color_info = check_color(image)
+    borders = detect_borders(image)
 
     report = {
-        "blur_analysis": blur_report,
+        "blur_report_with_text": blur_report_with_text,
         "skew_angle_deg": skew_angle,
         "skew_pass": abs(skew_angle) <= 2.0,
         "contrast_score": contrast,
         "contrast_pass": contrast >= contrast_thresh,
-        "resolution": resolution
+        "resolution": resolution,
+        "brightness": brightness,
+        "noise": noise,
+        "text_coverage": text_coverage,
+        "color_info": color_info,
+        "border_check": borders
     }
-
     return report
 
-# ---------- Example Usage ----------
 if __name__ == "__main__":
     path = input("Please enter the document path: ").strip().strip('"').strip("'")
     path = os.path.normpath(path)
@@ -85,7 +160,6 @@ if __name__ == "__main__":
     if not os.path.exists(path):
         print(f"Error: File not found at {path}")
     else:
-        report = analyze_document_quality(path)
+        report = analyze_document_quality_file(path)
         print("Document Quality Report:")
-        for k, v in report.items():
-            print(f"{k}: {v}")
+        print(report)
