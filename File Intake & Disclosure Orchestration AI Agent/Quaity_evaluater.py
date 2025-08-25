@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
 import os
-from pdf2image import convert_from_path
+from pdf2image import convert_from_path # type: ignore
 
 # Quality Evaluation
 # Check if enough text is present (text_coverage_ratio >= 0.05, else reject for OCR)
