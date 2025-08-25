@@ -28,15 +28,15 @@ def detect_blur_text_sensitive(image, lap_thresh=100, tenengrad_thresh=50):
     gray_text = cv2.bitwise_and(gray, gray, mask=text_mask)
 
     #Blur measures (on text only)
-    lap_var = cv2.Laplacian(gray_text, cv2.CV_64F).var()
+    lap_var = float(cv2.Laplacian(gray_text, cv2.CV_64F).var())
 
     gx = cv2.Sobel(gray_text, cv2.CV_64F, 1, 0, ksize=3)
     gy = cv2.Sobel(gray_text, cv2.CV_64F, 0, 1, ksize=3)
     gnorm = np.sqrt(gx**2 + gy**2)
-    tenengrad_median = np.median(gnorm[text_mask > 0]) if np.any(text_mask > 0) else 0
+    tenengrad_median = float(np.median(gnorm[text_mask > 0]) if np.any(text_mask > 0) else 0)
 
     #Decision
-    blur_pass = (lap_var >= lap_thresh) and (tenengrad_median >= tenengrad_thresh)
+    blur_pass = bool((lap_var >= lap_thresh) and (tenengrad_median >= tenengrad_thresh))
 
     return {
         "laplacian_score_text": lap_var,
@@ -56,11 +56,11 @@ def compute_skew(image):
         angle = -angle
     if angle == -90:
         angle = 0.0
-    return angle
+    return float(angle)
 
 def estimate_contrast(image):
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    return gray.std()
+    return float(gray.std())
 
 def estimate_resolution(image, dpi_assumed=96):
     h, w = image.shape[:2]
@@ -73,26 +73,26 @@ def estimate_resolution(image, dpi_assumed=96):
 
 def estimate_brightness(image):
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    mean_intensity = np.mean(gray)
+    mean_intensity = float(np.mean(gray))
     return {"mean_brightness": mean_intensity,
-            "under_exposed": mean_intensity < 50,
-            "over_exposed": mean_intensity > 200}
+            "under_exposed": bool(mean_intensity < 50),
+            "over_exposed": bool(mean_intensity > 200)}
 
 def estimate_noise(image):
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     lap = cv2.Laplacian(gray, cv2.CV_64F)
-    noise_level = lap.var()
+    noise_level = float(lap.var())
     return {"noise_score": noise_level,
-            "noisy": noise_level > 500}
+            "noisy": bool(noise_level > 500)}
 
 def estimate_text_coverage(image):
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     _, bw = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
     text_pixels = np.sum(bw == 0)
     total_pixels = bw.size
-    ratio = text_pixels / total_pixels
+    ratio = float(text_pixels / total_pixels)
     return {"text_coverage_ratio": ratio,
-            "too_little_text": ratio < 0.05}
+            "too_little_text": bool(ratio < 0.05)}
 
 def check_color(image):
     if len(image.shape) < 3 or image.shape[2] == 1:
@@ -106,7 +106,7 @@ def detect_borders(image):
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     _, bw = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
     white_ratio = np.mean(bw == 255)
-    return {"border_artifacts": white_ratio < 0.9}
+    return {"border_artifacts": bool(white_ratio < 0.9)}
 
 def analyze_document_quality_file(file_path, dpi=200):
     ext = os.path.splitext(file_path)[-1].lower()

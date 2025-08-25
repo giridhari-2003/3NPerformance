@@ -1,3 +1,6 @@
 opencv-python
 numpy
-pdf2image 
+pdf2image
+python-multipart
+uvicorn
+fastapi

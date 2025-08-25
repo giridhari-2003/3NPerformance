@@ -3,8 +3,8 @@ from fastapi import FastAPI, UploadFile, File
 from fastapi.responses import JSONResponse
 import shutil
 from pathlib import Path
-
-from Quaity_evaluater import analyze_document_quality_file  # import your function
+from fastapi.encoders import jsonable_encoder
+from Quality_evaluater import analyze_document_quality_file  # import your function
 
 app = FastAPI(title="Document Quality API", version="1.0")
 
@@ -21,6 +21,7 @@ async def analyze_document(file: UploadFile = File(...)):
 
         # Run analysis
         report = analyze_document_quality_file(str(file_path))
+        report = jsonable_encoder(report)
 
         return JSONResponse(content=report)
 
@@ -31,6 +32,7 @@ async def analyze_document(file: UploadFile = File(...)):
         # Cleanup uploaded file after processing
         if file_path.exists():
             os.remove(file_path)
+
 
 @app.get("/")
 async def root():
