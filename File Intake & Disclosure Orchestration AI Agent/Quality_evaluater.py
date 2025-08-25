@@ -36,7 +36,7 @@ def detect_blur_text_sensitive(image, lap_thresh=100, tenengrad_thresh=50):
     tenengrad_median = float(np.median(gnorm[text_mask > 0]) if np.any(text_mask > 0) else 0)
 
     #Decision
-    blur_pass = bool((lap_var >= lap_thresh) and (tenengrad_median >= tenengrad_thresh))
+    blur_pass = bool((lap_var >= lap_thresh) or (tenengrad_median >= tenengrad_thresh))#Laplacian is for text document and tenengrad is for photo 
 
     return {
         "laplacian_score_text": lap_var,
@@ -73,10 +73,11 @@ def estimate_resolution(image, dpi_assumed=96):
 
 def estimate_brightness(image):
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    contrast_score = float(gray.std())
     mean_intensity = float(np.mean(gray))
     return {"mean_brightness": mean_intensity,
             "under_exposed": bool(mean_intensity < 50),
-            "over_exposed": bool(mean_intensity > 200)}
+            "over_exposed": bool(mean_intensity > 200 and contrast_score < 30)}
 
 def estimate_noise(image):
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
@@ -92,7 +93,7 @@ def estimate_text_coverage(image):
     total_pixels = bw.size
     ratio = float(text_pixels / total_pixels)
     return {"text_coverage_ratio": ratio,
-            "too_little_text": bool(ratio < 0.05)}
+            "too_little_text": bool(ratio < 0.02)} # it reffers blank page
 
 def check_color(image):
     if len(image.shape) < 3 or image.shape[2] == 1:
@@ -102,11 +103,11 @@ def check_color(image):
         return {"is_color": False}
     return {"is_color": True}
 
-def detect_borders(image):
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    _, bw = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    white_ratio = np.mean(bw == 255)
-    return {"border_artifacts": bool(white_ratio < 0.9)}
+# def detect_borders(image):
+#     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+#     _, bw = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+#     white_ratio = np.mean(bw == 255)
+#     return {"border_artifacts": bool(white_ratio < 0.9)}
 
 def analyze_document_quality_file(file_path, dpi=200):
     ext = os.path.splitext(file_path)[-1].lower()
@@ -136,7 +137,7 @@ def analyze_document_quality_image(image, blur_thresh=100, tenengrad_thresh=50, 
     noise = estimate_noise(image)
     text_coverage = estimate_text_coverage(image)
     color_info = check_color(image)
-    borders = detect_borders(image)
+    # borders = detect_borders(image)
 
     report = {
         "blur_report_with_text": blur_report_with_text,
@@ -149,9 +150,38 @@ def analyze_document_quality_image(image, blur_thresh=100, tenengrad_thresh=50, 
         "noise": noise,
         "text_coverage": text_coverage,
         "color_info": color_info,
-        "border_check": borders
+        # "border_check": borders
     }
     return report
+
+def summarize_quality_report(report: dict) -> dict:
+    reasons = []
+
+    for page in report["pages"]:
+        page_no = page["page"]
+        r = page["report"]
+
+        if not r["blur_report_with_text"]["blur_pass"]:
+            reasons.append(f"page_{page_no}: blurred")
+        if not r["skew_pass"]:
+            reasons.append(f"page_{page_no}: skewed")
+        if not r["contrast_pass"]:
+            reasons.append(f"page_{page_no}: low_contrast")
+        if r["brightness"]["over_exposed"]:
+            reasons.append(f"page_{page_no}: over_exposed")
+        if r["brightness"]["under_exposed"]:
+            reasons.append(f"page_{page_no}: under_exposed")
+        if r["noise"]["noisy"]:
+            reasons.append(f"page_{page_no}: noisy")
+        if r["text_coverage"]["too_little_text"]:
+            reasons.append(f"page_{page_no}: too_little_text")
+        # if r["border_check"]["border_artifacts"]:
+        #     reasons.append(f"page_{page_no}: border_artifacts")
+
+    if reasons:
+        return {"quality_checker": "fail", "reason": "; ".join(reasons)}
+    else:
+        return {"quality_checker": "pass", "reason": None}
 
 if __name__ == "__main__":
     path = input("Please enter the document path: ").strip().strip('"').strip("'")
