@@ -4,3 +4,5 @@ pdf2image
 python-multipart
 uvicorn
 fastapi
+
+streamlit
