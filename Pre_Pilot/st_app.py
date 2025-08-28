@@ -1,7 +1,7 @@
 import streamlit as st
 import tempfile
 import os
-from Quaity_evaluater import analyze_document_quality_file
+from Quaity_evaluater import summarize_quality_report, analyze_document_quality_file
 
 st.set_page_config(
     page_title="Document Quality Validator",
@@ -29,9 +29,13 @@ if uploaded_file is not None:
     with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(uploaded_file.name)[-1]) as tmp_file:
         tmp_file.write(uploaded_file.read())
         temp_path = tmp_file.name
-
-    result, reason = analyze_document_quality_file(temp_path)
-
+    detailed_report = analyze_document_quality_file(str(temp_path))
+    print(detailed_report)
+    summary = summarize_quality_report(detailed_report)
+    
+    result = summary["quality_checker"]
+    reason = summary["reason"]
+    
     os.remove(temp_path)
 
     st.subheader("📊 Analysis Result")

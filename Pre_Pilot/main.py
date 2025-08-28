@@ -4,7 +4,7 @@ from fastapi.responses import JSONResponse
 import shutil
 from pathlib import Path
 from fastapi.encoders import jsonable_encoder
-from Quality_evaluater import analyze_document_quality_file,summarize_quality_report  # import your function
+from Quaity_evaluater import analyze_document_quality_file,summarize_quality_report
 
 app = FastAPI(title="Document Quality API", version="1.0")
 
@@ -18,7 +18,7 @@ async def analyze_document(file: UploadFile = File(...)):
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
 
-        # Run analysis
+        # Runing analysis
         detailed_report = analyze_document_quality_file(str(file_path))
         print(detailed_report)
         summary = summarize_quality_report(detailed_report)
